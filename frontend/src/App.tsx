@@ -10,7 +10,9 @@ import {
   getJob,
   getLlmStatus,
   planJob,
+  previewUrl,
   resetClip,
+  segmentPreviewUrl,
   startJob,
   uploadJob,
 } from "./api";
@@ -60,7 +62,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [preview, setPreview] = useState<{ path: string; title: string } | null>(
+  // 预览弹窗：src 直接给视频地址，兼容「完整文件预览」和「片段现场渲染预览」
+  const [preview, setPreview] = useState<{ src: string; title: string } | null>(
     null,
   );
   const noticeTimer = useRef<number | null>(null);
@@ -483,6 +486,12 @@ export default function App() {
               busy={busy}
               onCompose={handleCompose}
               onExportAll={handleExportAll}
+              onPreviewSegment={(segment) =>
+                setPreview({
+                  src: segmentPreviewUrl(job.id, segment.id),
+                  title: `片段预览 · ${segment.step} · ${segment.duration.toFixed(1)}s`,
+                })
+              }
             />
             {!showEditor ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-5 py-8 text-center text-sm text-slate-500">
@@ -499,7 +508,9 @@ export default function App() {
                 <ProgressPanel job={job} />
                 <ResultPanel
                   job={job}
-                  onPreview={(path, title) => setPreview({ path, title })}
+                  onPreview={(path, title) =>
+                    setPreview({ src: previewUrl(job.id, path), title })
+                  }
                 />
               </div>
               <aside className="space-y-5 lg:sticky lg:top-5">
@@ -537,8 +548,7 @@ export default function App() {
 
       {preview ? (
         <VideoPreviewModal
-          jobId={job?.id ?? ""}
-          path={preview.path}
+          src={preview.src}
           title={preview.title}
           onClose={() => setPreview(null)}
         />

@@ -385,6 +385,82 @@ def build_clip_command(
     return command
 
 
+def build_preview_command(
+    source: Path,
+    start: float,
+    duration: float,
+    output: Path,
+    video_info: VideoInfo,
+) -> list[str]:
+    """构造“片段快预览”的 ffmpeg 命令。
+
+    与正式切片不同：这里只求快，不追求画质。
+    - 高度超过 720 时等比缩到 720（竖屏 1080x1920 会变成 405x720），明显省时间；
+    - 用 veryfast + crf 28，体积小、编码快；
+    - 同样保留音轨，方便老板听文案。
+    """
+
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        "-ss",
+        f"{start:.6f}",
+        "-i",
+        str(source),
+        "-t",
+        f"{duration:.6f}",
+        "-map",
+        "0:v:0",
+        # 高度不变，宽度按比例自动算；超过 720 则缩到 720
+        "-vf",
+        "scale=-2:min(720\\,ih)",
+    ]
+
+    if video_info.has_audio:
+        command += ["-map", "0:a:0?"]
+
+    command += [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+
+    if video_info.has_audio:
+        channels = max(1, min(2, video_info.channels or 2))
+        command += [
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            str(video_info.sample_rate or 44100),
+            "-ac",
+            str(channels),
+        ]
+    else:
+        command += ["-an"]
+
+    command += [
+        "-movflags",
+        "+faststart",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-y",
+        str(output),
+    ]
+    return command
+
+
 def build_merged_command(
     source: Path,
     plan_items: list[dict],

@@ -171,6 +171,15 @@ export function ClockIcon(props: IconProps) {
   );
 }
 
+/** 加号图标：用于“在下方插入片段” */
+export function PlusIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
 /** 搜索图标：用于按关键词筛选候选片段 */
 export function SearchIcon(props: IconProps) {
   return (

@@ -1,15 +1,18 @@
-import { useEffect } from "react";
-import { previewUrl } from "../api";
+import { useEffect, useState } from "react";
 import { XIcon } from "./Icons";
 
 interface Props {
-  jobId: string;
-  path: string;
+  /** 已经拼好的视频地址（完整预览或片段预览） */
+  src: string;
   title: string;
   onClose: () => void;
 }
 
-export default function VideoPreviewModal({ jobId, path, title, onClose }: Props) {
+export default function VideoPreviewModal({ src, title, onClose }: Props) {
+  // 片段预览需要后端现场渲染，先展示加载提示，避免黑屏让人以为坏了
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState<string | null>(null);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -43,14 +46,29 @@ export default function VideoPreviewModal({ jobId, path, title, onClose }: Props
             <XIcon size={18} />
           </button>
         </div>
-        <div className="flex max-h-[78vh] items-center justify-center bg-black">
+        <div className="relative flex max-h-[78vh] items-center justify-center bg-black">
           <video
             className="max-h-[78vh] w-full"
-            src={previewUrl(jobId, path)}
+            src={src}
             controls
             autoPlay
             playsInline
+            onCanPlay={() => setLoading(false)}
+            onError={() =>
+              setFailed("预览加载失败，可能还在渲染或片段已被删除，请关闭后重试")
+            }
           />
+          {loading && !failed ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80 text-xs text-slate-300">
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-slate-600 border-t-indigo-400" />
+              正在渲染预览片段…
+            </div>
+          ) : null}
+          {failed ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/85 px-6 text-center text-xs text-rose-300">
+              {failed}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

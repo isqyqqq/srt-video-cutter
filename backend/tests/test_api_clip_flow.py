@@ -303,3 +303,83 @@ def test_regenerate_clears_export(client, short_media, ordered_srt):
     assert snapshot["export"]["status"] == "idle"
     assert snapshot["export"]["ready"] is False
     assert client.get(f"/api/jobs/{job_id}/export-all.zip").status_code == 404
+
+
+def test_compose_insert_in_middle(client, short_media, ordered_srt):
+    """在成片中间插入候选片段：只把该段插到指定位置，其余顺序不变。"""
+
+    video, _ = short_media
+    job_id = _upload(client, video, ordered_srt).json()["id"]
+    client.post(f"/api/jobs/{job_id}/hooks", json={"count": 3})
+    client.post(f"/api/jobs/{job_id}/clip-srt", json={"hook_id": "h1"})
+
+    # 原成片是 [s1, s2]，把候选 c1 插到第 1 条后面 → [s1, c1, s2]
+    response = client.post(
+        f"/api/jobs/{job_id}/composition",
+        json={"segment_ids": ["s1", "c1", "s2"]},
+    )
+    assert response.status_code == 200, response.text
+    snapshot = response.json()
+    assert snapshot["composition"] == ["s1", "c1", "s2"]
+    # 切点表顺序跟随编排：第 2 条应是候选段（第 4 条字幕，2.9~3.5 秒）
+    assert snapshot["plan"]["items"][1]["srt_start"] == 3.0
+    assert len(snapshot["plan"]["items"]) == 3
+    # 插入后 c1 已进成片，不应再出现在候选库里
+    assert snapshot["library"][0]["id"] == "s1"
+
+
+def test_segment_preview_renders_and_caches(client, short_media, ordered_srt):
+    """片段快预览：第一次现场渲染 720p 小样，第二次直接命中缓存。"""
+
+    video, _ = short_media
+    job_id = _upload(client, video, ordered_srt).json()["id"]
+    client.post(f"/api/jobs/{job_id}/hooks", json={"count": 3})
+    client.post(f"/api/jobs/{job_id}/clip-srt", json={"hook_id": "h1"})
+
+    # 用候选片段 c1 预览：成片前它还没有 mp4，必须现场渲染
+    response = client.get(f"/api/jobs/{job_id}/segment-preview/c1")
+    assert response.status_code == 200, response.text
+    assert response.headers["accept-ranges"] == "bytes"
+    assert len(response.content) > 0
+
+    manager = client.app.state.manager
+    job = manager.get_job(job_id)
+    cached = list(job.paths.preview_dir.glob("c1_*.mp4"))
+    assert len(cached) == 1
+    first_mtime = cached[0].stat().st_mtime_ns
+
+    # 第二次请求：应命中缓存，不再重新渲染（文件修改时间不变）
+    response = client.get(f"/api/jobs/{job_id}/segment-preview/c1")
+    assert response.status_code == 200
+    assert cached[0].stat().st_mtime_ns == first_mtime
+
+
+def test_segment_preview_unknown_id(client, short_media, ordered_srt):
+    """预览不存在的片段：返回 400 + 中文原因。"""
+
+    video, _ = short_media
+    job_id = _upload(client, video, ordered_srt).json()["id"]
+    client.post(f"/api/jobs/{job_id}/hooks", json={"count": 3})
+    client.post(f"/api/jobs/{job_id}/clip-srt", json={"hook_id": "h1"})
+
+    response = client.get(f"/api/jobs/{job_id}/segment-preview/不存在")
+    assert response.status_code == 400
+    assert "不存在" in response.json()["detail"]
+
+
+def test_regenerate_clears_previews(client, short_media, ordered_srt):
+    """重新生成切片后，预览缓存要清掉，避免播到旧时间点的画面。"""
+
+    video, _ = short_media
+    job_id = _upload(client, video, ordered_srt).json()["id"]
+    client.post(f"/api/jobs/{job_id}/hooks", json={"count": 3})
+    client.post(f"/api/jobs/{job_id}/clip-srt", json={"hook_id": "h1"})
+    client.get(f"/api/jobs/{job_id}/segment-preview/c1")
+
+    manager = client.app.state.manager
+    job = manager.get_job(job_id)
+    assert len(list(job.paths.preview_dir.glob("*.mp4"))) == 1
+
+    # 重新生成切片：预览缓存应被清空
+    client.post(f"/api/jobs/{job_id}/clip-srt", json={"hook_id": "h1"})
+    assert len(list(job.paths.preview_dir.glob("*.mp4"))) == 0

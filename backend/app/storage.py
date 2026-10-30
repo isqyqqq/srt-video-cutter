@@ -20,6 +20,7 @@ class JobPaths:
     input_dir: Path
     clips_dir: Path
     export_dir: Path
+    preview_dir: Path
     merged: Path
     plan_json: Path
     result_json: Path
@@ -37,6 +38,8 @@ def create_job_paths(root: Path) -> JobPaths:
     input_dir = root / "input"
     clips_dir = root / "clips"
     export_dir = root / "export_all"
+    # 片段快预览的缓存目录（按需生成的 720p 小样，可随时清）
+    preview_dir = root / "previews"
     input_dir.mkdir(parents=True, exist_ok=True)
     clips_dir.mkdir(parents=True, exist_ok=True)
 
@@ -45,6 +48,7 @@ def create_job_paths(root: Path) -> JobPaths:
         input_dir=input_dir,
         clips_dir=clips_dir,
         export_dir=export_dir,
+        preview_dir=preview_dir,
         merged=root / "merged.mp4",
         plan_json=root / "plan.json",
         result_json=root / "result.json",

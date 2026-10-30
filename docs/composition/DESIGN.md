@@ -73,7 +73,8 @@ composition: list[str]   # 成片片段 id 顺序
 - `types.ts`：`JobSnapshot` 增 `library: LibraryItem[]`、`composition: string[]`。
 - `api.ts`：`composeJob(jobId, segmentIds)`。
 - 新组件 `CompositionEditor`：
-  - 上半「成片编排」：每行显示序号/文案/时长，支持上移、下移、删除、替换（下拉选库片段）。
+  - 上半「成片编排」：每行显示序号/文案/时长，支持上移、下移、删除、替换（下拉选库片段）、
+    **插入（在任意一条下方新增片段，插入面板带关键词搜索）**；
   - 下半「候选片段库」：显示未被使用的库片段，支持"添加到最后"。
   - 每次操作算出新 id 数组，调用 `onCompose`。
 - `App.tsx`：`handleCompose` 调接口并刷新 job。
@@ -125,3 +126,69 @@ composition: list[str]   # 成片片段 id 顺序
 - `pytest`：`test_export_all_includes_spare`、`test_export_all_requires_library`、
   `test_export_all_zip_404_before_export`、`test_regenerate_clears_export`。
 - zip 内 mp4 数量 = `library` 项数，清单含「成片/候选」两类。
+
+## 7. 任意位置插入片段（v1.4）
+
+### 7.1 需求
+
+成片编排里，除了「替换当前位置」，还需要**在任意一条下方插入新片段**，
+并且插入时能从候选库里**搜索**挑片段。
+
+### 7.2 后端
+
+无需改动：`compose` 接口本来就接收完整的 `segment_ids` 数组，
+插入只是把新 id 用 `splice(position+1, 0, id)` 放进数组再提交。
+
+### 7.3 前端
+
+- `SegmentRow` 新增 `onInsert` / `insertCandidates`，行内按钮「＋ 插入」（绿色）。
+- 插入面板与替换面板结构一致：`SegmentSearch` + 候选列表，点击即插入并自动收起。
+- 插入与替换面板互斥（打开一个会自动收起另一个），避免两个面板同时展开挤占页面。
+- `insertAfter(position, id)`：`next.splice(position + 1, 0, id)` → `onCompose(next)`。
+- 插入后面板刷新：被插入的片段从「候选库」消失（因为它已进成片），
+  可用「删除」再撤回。
+
+### 7.4 验收
+
+- `test_compose_insert_in_middle`：`[s1,s2]` 插入 c1 → `[s1,c1,s2]`，
+  切点表第 2 条对应该候选段（3.0s 起），段数变 3，c1 不再出现在候选库。
+
+## 8. 片段快速预览（v1.5）
+
+### 8.1 问题
+
+候选片段在「开始剪辑」之前**还没有 mp4 文件**，老板没法先看画面再决定替不替换。
+如果为了预览把每段都按正式画质渲染一遍，白白浪费磁盘和时间。
+
+### 8.2 方案：按需渲染 + 缓存
+
+- `POST` 不需要；直接用 `GET /api/jobs/{id}/segment-preview/{segment_id}`。
+- 请求时后端才渲染这一小段，参数比正式切片激进：
+
+| 项 | 正式切片 | 预览小样 |
+|---|---|---|
+| 缩放 | 原分辨率 | 高度上限 720（`scale=-2:min(720,ih)`） |
+| preset | medium | veryfast |
+| crf | 18 | 28 |
+| 音频码率 | 192k | 128k |
+
+实测（1080×1920 竖屏源）：6 秒片段渲染 **0.61 秒 / 225 KB**，输出 406×720。
+
+- 缓存文件名 `{segment_id}_{start:.3f}_{duration:.3f}.mp4`，放在 `<任务>/previews/`。
+  **文件名带起止时间**：片段被「替换」后 id 可能复用但时间不同，不会读到旧画面。
+- `_clear_previews()`：重新生成切片、`reset-clip` 时整体清空。
+
+### 8.3 前端
+
+- `SegmentRow` 新增 `onPreview`，行内「▶ 预览」按钮；成片行与候选库行都有。
+- `VideoPreviewModal` 改为接收 `src`（不再自己拼路径），同时新增：
+  - 加载遮罩「正在渲染预览片段…」（首次渲染有几秒等待，避免黑屏误判故障）
+  - 失败提示（渲染失败 / 片段已删除）
+- `App.tsx` 统一 `preview: {src, title}`，成片预览与片段预览共用同一个弹窗。
+
+### 8.4 验收
+
+- `test_segment_preview_renders_and_caches`：首次渲染成功 + 生成缓存；二次请求 mtime 不变（命中缓存）。
+- `test_segment_preview_unknown_id`：未知 id 返回 400 中文提示。
+- `test_regenerate_clears_previews`：重新生成切片后预览缓存被清空。
+- 手工验证 `scale` 滤镜：1080×1920 → 406×720，音轨保留。

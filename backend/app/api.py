@@ -307,6 +307,23 @@ def preview(job_id: str, file_path: str, request: Request) -> StreamingResponse:
     return _range_response(target, request, download=False)
 
 
+@router.get("/jobs/{job_id}/segment-preview/{segment_id}")
+def preview_segment(job_id: str, segment_id: str, request: Request) -> StreamingResponse:
+    """片段快预览：按需渲染一个 720p 小样并返回（支持 Range）。
+
+    候选片段在成片前还没有 mp4 文件，这里第一次请求时现场渲染，
+    之后按「片段 id + 起止时间」缓存，再次请求直接读缓存。
+    """
+
+    manager = get_manager(request)
+    try:
+        target = manager.preview_segment(job_id, segment_id)
+    except JobError as exc:
+        # 片段不存在 / 渲染失败 / 磁盘不足，都给出中文原因
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _range_response(target, request, download=False)
+
+
 @router.get("/jobs/{job_id}/download/{file_path:path}")
 def download(job_id: str, file_path: str, request: Request) -> StreamingResponse:
     """下载文件。"""

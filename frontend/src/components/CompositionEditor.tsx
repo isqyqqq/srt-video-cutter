@@ -10,6 +10,8 @@ import {
   GripIcon,
   LoaderIcon,
   PackageIcon,
+  PlayIcon,
+  PlusIcon,
   RefreshIcon,
   ScissorsIcon,
   SearchIcon,
@@ -24,6 +26,8 @@ interface Props {
   onCompose: (segmentIds: string[]) => void;
   /** 导出全部片段（含候选库） */
   onExportAll: () => void;
+  /** 预览某个片段：父组件弹出播放器（后端按需渲染 720p 小样） */
+  onPreviewSegment: (segment: LibraryItem) => void;
 }
 
 /** 按关键词筛选片段。
@@ -98,6 +102,9 @@ function SegmentRow({
   onRemove,
   onReplace,
   replaceCandidates,
+  onInsert,
+  insertCandidates,
+  onPreview,
   showOrigin,
   onAppend,
   dragHandle,
@@ -118,6 +125,11 @@ function SegmentRow({
   onRemove?: () => void;
   onReplace?: (newId: string) => void;
   replaceCandidates?: LibraryItem[];
+  /** 在当前位置下方插入一个候选片段 */
+  onInsert?: (newId: string) => void;
+  insertCandidates?: LibraryItem[];
+  /** 点“预览”：现场渲染或读缓存后弹出播放器 */
+  onPreview?: () => void;
   showOrigin?: boolean;
   onAppend?: () => void;
   /** 是否显示拖拽把手（仅成片列表行启用） */
@@ -133,11 +145,18 @@ function SegmentRow({
   const [replacing, setReplacing] = useState(false);
   // 替换面板的关键词：只影响这里列出的候选，不影响成片数据
   const [replaceQuery, setReplaceQuery] = useState("");
+  // 插入面板：是否展开 + 关键词（同样只影响候选展示）
+  const [inserting, setInserting] = useState(false);
+  const [insertQuery, setInsertQuery] = useState("");
   const rowRef = useRef<HTMLDivElement>(null);
 
   const visibleCandidates = useMemo(
     () => filterItems(replaceCandidates ?? [], replaceQuery),
     [replaceCandidates, replaceQuery],
+  );
+  const visibleInserts = useMemo(
+    () => filterItems(insertCandidates ?? [], insertQuery),
+    [insertCandidates, insertQuery],
   );
 
   // 拖动时把整行作为拖拽幽灵图，比只拖把手好看
@@ -207,6 +226,17 @@ function SegmentRow({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {onPreview ? (
+            <button
+              type="button"
+              className="btn btn-ghost px-1.5 py-1 text-[11px] text-slate-500"
+              disabled={busy}
+              onClick={onPreview}
+              title="预览这个小片段"
+            >
+              <PlayIcon size={12} /> 预览
+            </button>
+          ) : null}
           {onMoveUp ? (
             <button
               type="button"
@@ -229,6 +259,22 @@ function SegmentRow({
               ↓
             </button>
           ) : null}
+          {onInsert ? (
+            <button
+              type="button"
+              className="btn btn-ghost px-1.5 py-1 text-[11px] text-emerald-600"
+              disabled={busy || !insertCandidates?.length}
+              onClick={() => {
+                setInserting((value) => !value);
+                setInsertQuery("");
+                // 展开插入面板时收起替换面板，避免两个面板同时打开
+                setReplacing(false);
+              }}
+              title="在这条下面插入片段"
+            >
+              <PlusIcon size={13} /> 插入
+            </button>
+          ) : null}
           {onReplace ? (
             <button
               type="button"
@@ -237,6 +283,8 @@ function SegmentRow({
               onClick={() => {
                 setReplacing((value) => !value);
                 setReplaceQuery("");
+                // 展开替换面板时收起插入面板
+                setInserting(false);
               }}
               title="用候选片段替换"
             >
@@ -267,6 +315,61 @@ function SegmentRow({
           ) : null}
         </div>
       </div>
+
+      {/* 插入面板：把选中的候选片段加到这条的下面，支持关键词搜索 */}
+      {inserting && onInsert ? (
+        <div className="mt-2 space-y-1.5 rounded-lg border border-emerald-100 bg-emerald-50/40 p-2">
+          <p className="text-[11px] text-emerald-700">
+            选择一个候选片段，插入到第 {index ?? "?"} 条之后：
+          </p>
+          {insertCandidates && insertCandidates.length ? (
+            <>
+              <SegmentSearch
+                value={insertQuery}
+                onChange={setInsertQuery}
+                placeholder="搜文案或类型，多个词用空格分隔"
+                matched={visibleInserts.length}
+                total={insertCandidates.length}
+              />
+              {visibleInserts.length ? (
+                <div className="max-h-48 space-y-1.5 overflow-auto">
+                  {visibleInserts.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        onInsert(candidate.id);
+                        setInserting(false);
+                        setInsertQuery("");
+                      }}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left text-[11px] transition hover:border-emerald-300 hover:bg-emerald-50"
+                    >
+                      <span className="badge bg-slate-100 text-slate-500">
+                        {candidate.step}
+                      </span>
+                      <span className="mono ml-1.5 text-slate-400">
+                        {candidate.duration.toFixed(1)}s
+                      </span>
+                      <p className="mt-0.5 line-clamp-2 text-slate-600">
+                        {candidate.text}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="rounded-lg border border-dashed border-slate-200 bg-white px-2 py-3 text-center text-[11px] text-slate-400">
+                  没有匹配“{insertQuery.trim()}”的候选片段
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-[11px] text-slate-400">
+              片段库中没有可插入的候选片段。
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {/* 替换下拉：从候选片段里挑一个替换当前行，支持关键词搜索 */}
       {replacing && onReplace ? (
@@ -329,6 +432,7 @@ export default function CompositionEditor({
   busy,
   onCompose,
   onExportAll,
+  onPreviewSegment,
 }: Props) {
   const library = job.library ?? [];
   const composition = job.composition ?? [];
@@ -398,6 +502,13 @@ export default function CompositionEditor({
     onCompose([...composition, id]);
   };
 
+  /** 在第 position 条之后插入一个片段（position 从 0 开始） */
+  const insertAfter = (position: number, id: string) => {
+    const next = [...composition];
+    next.splice(position + 1, 0, id);
+    onCompose(next);
+  };
+
   return (
     <section className="card overflow-hidden">
       <div className="card-header">
@@ -406,7 +517,7 @@ export default function CompositionEditor({
           <div>
             <h2 className="text-base font-semibold text-slate-900">成片编排</h2>
             <p className="mt-0.5 text-[11px] text-slate-500">
-              拖动左侧把手可排序，也可上移/下移/删除，或从候选库替换
+              拖动左侧把手可排序，也可插入/替换/上移/下移/删除
             </p>
           </div>
         </div>
@@ -533,6 +644,9 @@ export default function CompositionEditor({
                 onRemove={() => removeAt(position)}
                 onReplace={(newId) => replaceAt(position, newId)}
                 replaceCandidates={unusedItems}
+                onInsert={(newId) => insertAfter(position, newId)}
+                insertCandidates={unusedItems}
+                onPreview={() => onPreviewSegment(item)}
               />
             ))}
           </div>
@@ -575,6 +689,7 @@ export default function CompositionEditor({
                       item={item}
                       busy={busy}
                       showOrigin
+                      onPreview={() => onPreviewSegment(item)}
                       onAppend={() => append(item.id)}
                     />
                   ))
@@ -593,7 +708,8 @@ export default function CompositionEditor({
         </div>
 
         <p className="text-[11px] leading-relaxed text-slate-400">
-          提示：拖动左侧把手可调整顺序；替换是「用候选片段换掉当前位置的片段」，不改变其他片段；
+          提示：拖动左侧把手可调整顺序；「插入」是把候选片段加到当前这条的下面；
+          「替换」是换掉当前位置的片段，不改变其他片段；
           搜索框支持多关键词（空格分隔，需全部命中），可搜文案或类型（如“场景”“赞美”）；
           顺序以本列表为准，与原始 SRT 顺序无关。
         </p>

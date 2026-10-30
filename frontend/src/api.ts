@@ -157,6 +157,11 @@ export function previewUrl(jobId: string, path: string): string {
   return `/api/jobs/${jobId}/preview/${encodePath(path)}`;
 }
 
+/** 片段快预览地址：后端按需渲染 720p 小样并缓存 */
+export function segmentPreviewUrl(jobId: string, segmentId: string): string {
+  return `/api/jobs/${jobId}/segment-preview/${encodeURIComponent(segmentId)}`;
+}
+
 export function downloadUrl(jobId: string, path: string): string {
   return `/api/jobs/${jobId}/download/${encodePath(path)}`;
 }

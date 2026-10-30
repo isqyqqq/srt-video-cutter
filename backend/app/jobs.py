@@ -23,6 +23,7 @@ from .ffmpeg import (
     build_fast_clip_command,
     build_fast_concat_command,
     build_merged_command,
+    build_preview_command,
     probe_video,
     run_ffmpeg,
 )
@@ -434,6 +435,7 @@ class JobManager:
             for file_path in (job.paths.merged, job.paths.clips_zip, job.paths.result_json):
                 file_path.unlink(missing_ok=True)
             self._clear_export(job)
+            self._clear_previews(job)
 
             with self.lock:
                 job.cues = clip_cues
@@ -585,6 +587,7 @@ class JobManager:
         for file_path in (job.paths.merged, job.paths.clips_zip, job.paths.result_json):
             file_path.unlink(missing_ok=True)
         self._clear_export(job)
+        self._clear_previews(job)
         self._log(job, "已恢复完整字幕，清除切片 SRT 和旧成片")
         return job
 
@@ -626,6 +629,13 @@ class JobManager:
             f"余量前 {pad_before:.3f}s / 后 {pad_after:.3f}s",
         )
         return plan
+
+    def _clear_previews(self, job: Job) -> None:
+        """清掉片段快预览的缓存小样（重新生成切片 / 恢复完整字幕时调用）。"""
+
+        if job.paths.preview_dir.exists():
+            for old in job.paths.preview_dir.glob("*.mp4"):
+                old.unlink(missing_ok=True)
 
     def _clear_export(self, job: Job) -> None:
         """清掉“导出全部片段”的旧产物与状态（重新生成切片时调用）。"""
@@ -1076,3 +1086,56 @@ class JobManager:
         job.paths.result_json.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    # ---------------- 片段快预览（成片前先看画面） ----------------
+
+    def preview_segment(self, job_id: str, segment_id: str) -> Path:
+        """按需渲染某一小段，返回预览小样的文件路径。
+
+        候选片段在成片前还没有 mp4，老板想先看看画面，所以这里临时渲染一个
+        720p 轻量小样（veryfast + crf28），并按「片段 id + 起止时间」缓存：
+        同一个片段第二次点击直接命中缓存，不会再跑一遍 ffmpeg。
+
+        缓存放在 `<任务>/previews/` 下，重新生成切片 / 恢复完整字幕时整体清空。
+        """
+
+        job = self.get_job(job_id)
+        if job.status in {"queued", "processing"}:
+            raise JobError("任务正在处理中，暂时无法预览片段")
+
+        segment = next((item for item in job.library if item["id"] == segment_id), None)
+        if segment is None:
+            raise JobError(f"片段 {segment_id} 不存在，请刷新页面后重试")
+
+        start = float(segment.get("start") or 0.0)
+        end = float(segment.get("end") or 0.0)
+        duration = max(0.0, end - start)
+        if duration <= 0:
+            raise JobError("该片段时长为 0，无法预览")
+
+        # 文件名带上起止时间：片段被「替换」后 id 不变、时间会变，不会命中旧缓存
+        cache_name = f"{segment_id}_{start:.3f}_{duration:.3f}.mp4".replace("/", "-")
+        target = job.paths.preview_dir / cache_name
+        if target.exists() and target.stat().st_size > 0:
+            return target
+
+        job.paths.preview_dir.mkdir(parents=True, exist_ok=True)
+        command = build_preview_command(
+            job.video_path, start, duration, target, job.video_info
+        )
+        try:
+            run_ffmpeg(
+                command,
+                duration=duration,
+                on_log=lambda line: None,
+                cancel_event=None,
+                label=f"预览 {segment_id}",
+            )
+        except (FFmpegError, CancelledError) as exc:
+            target.unlink(missing_ok=True)
+            raise JobError(f"片段预览渲染失败：{exc}") from exc
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            raise JobError(_storage_hint(exc)) from exc
+
+        return target

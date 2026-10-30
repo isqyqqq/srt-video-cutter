@@ -1,0 +1,21 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+data/
+tests/output/
+# 本地测试用的大视频，体积 259M 超过 GitHub 单文件 100M 限制，不入库
+tests/*.mov
+tests/*.mp4
+*.log
+.pytest_cache/
+
+# 本地密钥
+.env
+.env.*
+!.env.example
